@@ -1,78 +1,124 @@
-export TGT_IPC_SOCKET=`pwd`/tgtd.socket 
+IQNINITIATOR=iqn.1994-05.com.redhat:rh7-client
+TGTPORTAL=172.16.135.133:3260
+IQNTARGET=iqn.2003-01.com.redhat.iscsi-gw:ceph-igw
+LIBISCSI_CHAP_USERNAME=yangzhaohui
+LIBISCSI_CHAP_PASSWORD=012345678989
+ISCSIURL=iscsi://${LIBISCSI_CHAP_USERNAME}%${LIBISCSI_CHAP_PASSWORD}@${TGTPORTAL}/${IQNTARGET}/0
 
-TGTD="tgtd"
-TGTADM="tgtadm"
-TGTLUN=`pwd`/LUN
-TGTPORTAL=127.0.0.1:3269
+create_target() {
+#echo "Create iscsi target"
 
-IQNTARGET=iqn.libiscsi.unittest.target
-IQNINITIATOR=iqn.libiscsi.unittest.initiator
-TGTURL=iscsi://${TGTPORTAL}/${IQNTARGET}/1
+gwcli <<'END'
+cd /iscsi-target
+create iqn.2003-01.com.redhat.iscsi-gw:ceph-igw
+END
 
-start_target() {
-    # in case we have one still running from a previous run
-    ${TGTADM} --op delete --force --mode target --tid 1 2>/dev/null
-    ${TGTADM} --op delete --mode system 2>/dev/null
-    # Setup target
-    echo "Starting iSCSI target"
-    ${TGTD} --iscsi portal=${TGTPORTAL},${1}
-    sleep 1
-    ${TGTADM} --op new --mode target --tid 1 -T ${IQNTARGET}
-    ${TGTADM} --op bind --mode target --tid 1 -I ALL
+sleep 2 
+
+#echo "Create gateways node1"
+gwcli <<'END'
+cd /iscsi-target/iqn.2003-01.com.redhat.iscsi-gw:ceph-igw/gateways
+create node1 172.16.135.133
+END
+
+sleep 2
+
+#echo "Create gateways node0"
+gwcli <<'END'
+cd /iscsi-target/iqn.2003-01.com.redhat.iscsi-gw:ceph-igw/gateways
+create node0 172.16.135.129
+END
 }
 
-shutdown_target() {
-    # Remove target
-    echo "Shutting down iSCSI target"
-    ${TGTADM} --op delete --force --mode target --tid 1
-    ${TGTADM} --op delete --mode system
+delete_target() {
+sleep 2
+
+#echo "Delete iscsi target"
+gwcli <<'END'
+cd /iscsi-target
+clearconfig confirm=true
+END
 }
 
-enable_header_digest() {
-    ${TGTADM} --op update --mode target --tid 1 -n HeaderDigest -v CRC32C
+create_disks() {
+sleep 2 
+
+#echo "Create disk"
+gwcli <<'END'
+cd /disks
+create pool=rbd image=disk_1 size=128m
+END
 }
 
-create_lun() {
-    # Setup LUN
-    truncate --size=100M ${TGTLUN}
-    ${TGTADM} --op new --mode logicalunit --tid 1 --lun 1 -b ${TGTLUN} --blocksize=4096
-    ${TGTADM} --op update --mode logicalunit --tid 1 --lun 1 --params thin_provisioning=1
+delete_disks() {
+sleep 2
+
+#echo "Delete disk"
+gwcli <<'END'
+cd /disks
+delete rbd.disk_1
+END
 }
 
-delete_lun() {
-    # Remove LUN
-    rm ${TGTLUN}
+create_client() {
+sleep 2
+
+#echo "Create iscsi client"
+gwcli <<'END'
+cd /iscsi-target/iqn.2003-01.com.redhat.iscsi-gw:ceph-igw/hosts
+create iqn.1994-05.com.redhat:rh7-client
+END
 }
 
-create_disk_lun() {
-    # Setup LUN
-    truncate --size=$2 ${TGTLUN}.$1
-    ${TGTADM} --op new --mode logicalunit --tid 1 --lun $1 -b ${TGTLUN}.$1 --blocksize=512
+delete_client() {
+sleep 2
+
+#echo "Delete client"
+gwcli <<'END'
+cd /iscsi-target/iqn.2003-01.com.redhat.iscsi-gw:ceph-igw/hosts
+delete iqn.1994-05.com.redhat:rh7-client
+END
 }
 
-delete_disk_lun() {
-    # Remove LUN
-    rm ${TGTLUN}.$1
+set_chap() {
+sleep 2
+
+#echo "set chap to iscsi client"
+gwcli <<'END' 
+cd /iscsi-target/iqn.2003-01.com.redhat.iscsi-gw:ceph-igw/hosts/iqn.1994-05.com.redhat:rh7-client
+auth chap=yangzhaohui/012345678989
+END
 }
+
+unset_chap() {
+sleep 2
+
+#echo "unset chap to iscsi client"
+gwcli <<'END' 
+cd /iscsi-target/iqn.2003-01.com.redhat.iscsi-gw:ceph-igw/hosts/iqn.1994-05.com.redhat:rh7-client
+auth nochap=yangzhaohui/012345678989
+END
+}
+
 
 add_disk_lun() {
-    ${TGTADM} --op new --mode logicalunit --tid 1 --lun $1 -b ${TGTLUN}.$1 --blocksize=512
+sleep 2
+
+#echo "Add lun to iscsi client"
+gwcli <<'END'
+cd /iscsi-target/iqn.2003-01.com.redhat.iscsi-gw:ceph-igw/hosts/iqn.1994-05.com.redhat:rh7-client
+disk add rbd.disk_1
+END
 }
 
 remove_disk_lun() {
-    ${TGTADM} --op delete --mode logicalunit --tid 1 --lun $1
-}
+sleep 2
 
-set_lun_removable() {
-    ${TGTADM} --op update --mode logicalunit --tid 1 --lun $1 --params removable=1
-}
-
-setup_chap() {
-    ${TGTADM} --op new --mode account --user libiscsi --password libiscsi
-    ${TGTADM} --op bind --mode account --tid 1 --user libiscsi
-
-    ${TGTADM} --op new --mode account --user outgoing --password outgoing
-    ${TGTADM} --op bind --mode account --tid 1 --user outgoing --outgoing
+#echo "Remove lun from iscsi client"
+gwcli <<'END'
+cd /iscsi-target/iqn.2003-01.com.redhat.iscsi-gw:ceph-igw/hosts/iqn.1994-05.com.redhat:rh7-client
+disk remove rbd.disk_1
+END
 }
 
 success() {
